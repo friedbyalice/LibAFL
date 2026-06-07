@@ -5,6 +5,7 @@ use alloc::{vec, vec::Vec};
 use core::ops::{BitAnd, BitOr};
 
 #[cfg(feature = "wide")]
+#[allow(deprecated)]
 use wide::CmpEq;
 
 /// Re-export our vector types
@@ -314,6 +315,7 @@ pub fn simplify_map_naive(map: &mut [u8]) {
 /// `simplify_map` implementation by u8x16, worse performance compared to LLVM
 /// auto-vectorization but faster if LLVM doesn't vectorize.
 #[cfg(feature = "wide")]
+#[allow(deprecated)]
 pub fn simplify_map_simd<V>(map: &mut [u8])
 where
     V: VectorType + Copy + Eq + CmpEq<Output = V>,
