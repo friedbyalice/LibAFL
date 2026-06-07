@@ -1,6 +1,11 @@
 //! The `GeneralizedInput` is an input that ca be generalized to represent a rule, used by Grimoire
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
+use core::{
+    borrow::Borrow,
+    cell::UnsafeCell,
+    hash::{Hash, Hasher},
+};
 
 use libafl_bolts::impl_serdeany;
 use serde::{Deserialize, Serialize};
@@ -10,6 +15,7 @@ use crate::{
     corpus::Testcase,
     inputs::BytesInput,
     stages::mutational::{MutatedTransform, MutatedTransformPost},
+    state::HasCorpus,
 };
 
 /// An item of the generalized input
@@ -22,13 +28,59 @@ pub enum GeneralizedItem {
 }
 
 /// Metadata regarding the generalised content of an input
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug)]
 #[cfg_attr(
     any(not(feature = "serdeany_autoreg"), miri),
     expect(clippy::unsafe_derive_deserialize)
 )] // for SerdeAny
 pub struct GeneralizedInputMetadata {
     generalized: Vec<GeneralizedItem>,
+    #[serde(skip)]
+    bytes: UnsafeCell<BytesInput>,
+}
+
+impl Clone for GeneralizedInputMetadata {
+    fn clone(&self) -> Self {
+        Self {
+            generalized: self.generalized.clone(),
+            bytes: UnsafeCell::new(unsafe { (*self.bytes.get()).clone() }),
+        }
+    }
+}
+
+impl PartialEq for GeneralizedInputMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.generalized == other.generalized
+    }
+}
+
+impl Eq for GeneralizedInputMetadata {}
+
+impl Hash for GeneralizedInputMetadata {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.generalized.hash(state);
+    }
+}
+
+impl Borrow<BytesInput> for GeneralizedInputMetadata {
+    fn borrow(&self) -> &BytesInput {
+        unsafe {
+            *self.bytes.get() = BytesInput::from(compute_bytes(&self.generalized));
+            &*self.bytes.get()
+        }
+    }
+}
+
+fn compute_bytes(generalized: &[GeneralizedItem]) -> Vec<u8> {
+    generalized
+        .iter()
+        .filter_map(|item| match item {
+            GeneralizedItem::Bytes(bytes) => Some(bytes),
+            GeneralizedItem::Gap => None,
+        })
+        .flatten()
+        .copied()
+        .collect()
 }
 
 impl_serdeany!(GeneralizedInputMetadata);
@@ -62,7 +114,11 @@ impl GeneralizedInputMetadata {
         if generalized.last() != Some(&GeneralizedItem::Gap) {
             generalized.push(GeneralizedItem::Gap);
         }
-        Self { generalized }
+        let bytes_bytes = compute_bytes(&generalized);
+        Self {
+            generalized,
+            bytes: UnsafeCell::new(BytesInput::from(bytes_bytes)),
+        }
     }
 
     /// Get the size of the generalized
@@ -81,15 +137,7 @@ impl GeneralizedInputMetadata {
     /// Convert generalized to bytes
     #[must_use]
     pub fn generalized_to_bytes(&self) -> Vec<u8> {
-        self.generalized
-            .iter()
-            .filter_map(|item| match item {
-                GeneralizedItem::Bytes(bytes) => Some(bytes),
-                GeneralizedItem::Gap => None,
-            })
-            .flatten()
-            .copied()
-            .collect()
+        compute_bytes(&self.generalized)
     }
 
     /// Get the generalized input
@@ -104,10 +152,14 @@ impl GeneralizedInputMetadata {
     }
 }
 
-impl<S> MutatedTransform<BytesInput, S> for GeneralizedInputMetadata {
+impl<S> MutatedTransform<BytesInput, S> for GeneralizedInputMetadata
+where
+    S: HasCorpus<BytesInput>,
+{
     type Post = Self;
 
-    fn try_transform_from(base: &mut Testcase<BytesInput>, _state: &S) -> Result<Self, Error> {
+    fn try_transform_from(base: &mut Testcase<BytesInput>, state: &S) -> Result<Self, Error> {
+        let input = base.load_input(state.corpus())?.clone();
         let meta = base
             .metadata_map()
             .get::<GeneralizedInputMetadata>()
@@ -117,12 +169,15 @@ impl<S> MutatedTransform<BytesInput, S> for GeneralizedInputMetadata {
                 ))
             })
             .cloned()?;
-
-        Ok(meta)
+        let result = meta;
+        unsafe {
+            *result.bytes.get() = input;
+        }
+        Ok(result)
     }
 
     fn try_transform_into(self, _state: &S) -> Result<(BytesInput, Self::Post), Error> {
-        Ok((BytesInput::from(self.generalized_to_bytes()), self))
+        Ok((BytesInput::from(compute_bytes(&self.generalized)), self))
     }
 }
 
