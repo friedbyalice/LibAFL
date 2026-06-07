@@ -36,8 +36,19 @@ impl<T> PrimitiveInputConverter<T> {
 /// Newtype pattern wrapper around an underlying structure to implement inputs
 ///
 /// This does not blanket implement [`super::Input`], because for certain inputs, writing them to disk does not make sense, because they don't own their data (like [`super::MutVecInput`])
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 pub struct ValueInput<T>(T);
+
+#[allow(clippy::expl_impl_clone_on_copy)]
+impl<T: Clone> Clone for ValueInput<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.0.clone_from(&source.0);
+    }
+}
 
 impl<T> From<T> for ValueInput<T> {
     fn from(value: T) -> Self {
