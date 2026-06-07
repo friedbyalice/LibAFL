@@ -1875,6 +1875,7 @@ where
         }
     }
 
+    #[allow(clippy::std_instead_of_core)]
     fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
         match self.empty_slice_mut().write_vectored(bufs) {
             Ok(w) => {
