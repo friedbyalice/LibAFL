@@ -5,7 +5,7 @@ use alloc::{
     borrow::{Cow, ToOwned},
     string::ToString,
 };
-use core::{marker::PhantomData, num::NonZeroUsize};
+use core::{borrow::Borrow, marker::PhantomData, num::NonZeroUsize};
 
 use libafl_bolts::{Named, rands::Rand};
 
@@ -143,7 +143,7 @@ impl<E, EM, I1, I2, M, S, Z> Named for StdMutationalStage<E, EM, I1, I2, M, S, Z
 
 impl<E, EM, I1, I2, M, S, Z> Stage<E, EM, S, Z> for StdMutationalStage<E, EM, I1, I2, M, S, Z>
 where
-    I1: Clone + MutatedTransform<I2, S>,
+    I1: Clone + MutatedTransform<I2, S> + Borrow<I2>,
     I2: Input,
     M: Mutator<I1, S>,
     S: HasRand
@@ -235,7 +235,7 @@ where
 
 impl<E, EM, I1, I2, M, S, Z> StdMutationalStage<E, EM, I1, I2, M, S, Z>
 where
-    I1: MutatedTransform<I2, S> + Clone,
+    I1: MutatedTransform<I2, S> + Clone + Borrow<I2>,
     I2: Input,
     M: Mutator<I1, S>,
     S: HasRand + HasCurrentTestcase<I2> + MaybeHasClientPerfMonitor,
@@ -266,8 +266,14 @@ where
         drop(testcase);
         mark_feature_time!(state, PerfFeature::GetInputFromCorpus);
 
+        // Keep the original pristine and clone once into a reusable working buffer.
+        let original = input;
+        let mut input = original.clone();
+
         for _ in 0..num {
-            let mut input = input.clone();
+            // Reset the working buffer from the original (reuses the allocation
+            // thanks to the efficient `clone_from` on the inner type).
+            input.clone_from(&original);
 
             start_timer!(state);
             let mutated = self.mutator_mut().mutate(state, &mut input)?;
@@ -277,13 +283,20 @@ where
                 continue;
             }
 
-            let (untransformed, post) = input.try_transform_into(state)?;
+            // Evaluate with a borrowed input — avoids cloning in the common case
+            // where the input is not interesting enough to save.
             let (_, corpus_id) =
-                fuzzer.evaluate_filtered(state, executor, manager, &untransformed)?;
+                fuzzer.evaluate_filtered(state, executor, manager, input.borrow())?;
 
             start_timer!(state);
             self.mutator_mut().post_exec(state, corpus_id)?;
-            post.post_exec(state, corpus_id)?;
+
+            if let Some(corpus_id) = corpus_id {
+                // Only transform+consume when input is actually going into the corpus.
+                let (_untransformed, post) = input.try_transform_into(state)?;
+                post.post_exec(state, Some(corpus_id))?;
+                input = original.clone();
+            }
             mark_feature_time!(state, PerfFeature::MutatePostExec);
         }
 
