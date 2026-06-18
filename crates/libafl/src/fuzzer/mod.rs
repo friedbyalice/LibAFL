@@ -25,7 +25,7 @@ use crate::{
     corpus::{Corpus, CorpusId, HasCurrentCorpusId, HasTestcase, Testcase},
     events::{
         Event, EventConfig, EventFirer, EventReceiver, EventWithStats, ProgressReporter,
-        SendExiting,
+        SendExiting, client_stop_requested_check, reset_client_sigint,
     },
     executors::{Executor, ExitKind, HasObservers},
     feedbacks::Feedback,
@@ -1076,6 +1076,7 @@ where
     ) -> Result<(), Error> {
         let monitor_timeout = STATS_TIMEOUT_DEFAULT;
         loop {
+            client_stop_requested_check(state);
             manager.maybe_report_progress(state, monitor_timeout)?;
 
             self.fuzz_one(stages, executor, state, manager)?;
@@ -1100,6 +1101,7 @@ where
         let monitor_timeout = STATS_TIMEOUT_DEFAULT;
 
         for _ in 0..iters {
+            client_stop_requested_check(state);
             manager.maybe_report_progress(state, monitor_timeout)?;
             ret = Some(self.fuzz_one(stages, executor, state, manager)?);
         }
@@ -1110,6 +1112,8 @@ where
         // manager.on_restart(state)?;
         // But as the state may grow to a few megabytes,
         // for now we won't, and the user has to do it (unless we find a way to do this on `Drop`).
+
+        reset_client_sigint();
 
         Ok(ret.unwrap())
     }

@@ -38,13 +38,15 @@ use core::{
 
 use ahash::RandomState;
 pub use broker_hooks::*;
+use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "std")]
 pub use launcher::*;
+
 use libafl_bolts::current_time;
 #[cfg(all(unix, feature = "std"))]
-use libafl_bolts::os::CTRL_C_EXIT;
-#[cfg(all(unix, feature = "std"))]
-use libafl_bolts::os::unix_signals::{Signal, SignalHandler, siginfo_t, ucontext_t};
+use libafl_bolts::os::unix_signals::{
+    Signal, SignalHandler, setup_signal_handler, siginfo_t, ucontext_t,
+};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "std")]
 use uuid::Uuid;
@@ -61,43 +63,52 @@ use crate::{
 #[cfg(all(unix, feature = "std", feature = "multi_machine"))]
 pub mod multi_machine;
 
-/// Check if ctrl-c is sent with this struct
 #[cfg(all(unix, feature = "std"))]
-pub static mut EVENTMGR_SIGHANDLER_STATE: ShutdownSignalData = ShutdownSignalData {};
+static mut CLIENT_SIGNAL_HANDLER: ClientSignalHandler = ClientSignalHandler {};
 
-/// A signal handler for catching `ctrl-c`.
-///
-/// The purpose of this signal handler is solely for calling `exit()` with a specific exit code 100
-/// In this way, the restarting manager can tell that we really want to exit
+/// Signal handler that sets [`crate::state::CLIENT_SIGINT`] so the fuzzer can shut down cleanly
+/// (Drop impls run, `.cur_input` is removed, forkserver is killed, etc.).
 #[cfg(all(unix, feature = "std"))]
 #[derive(Debug, Clone)]
-pub struct ShutdownSignalData {}
+pub struct ClientSignalHandler;
 
-/// Shutdown handler. `SigTerm`, `SigInterrupt`, `SigQuit` call this
-/// We can't handle SIGKILL in the signal handler, this means that you shouldn't kill your fuzzer with `kill -9` because then the shmem segments are never freed
-///
-/// # Safety
-/// This will exit the program
 #[cfg(all(unix, feature = "std"))]
-impl SignalHandler for ShutdownSignalData {
+impl SignalHandler for ClientSignalHandler {
     unsafe fn handle(
         &mut self,
         _signal: Signal,
         _info: &mut siginfo_t,
         _context: Option<&mut ucontext_t>,
     ) {
-        unsafe {
-            #[cfg(unix)]
-            libc::_exit(CTRL_C_EXIT);
-
-            #[cfg(windows)]
-            windows::Win32::System::Threading::ExitProcess(100);
-        }
+        crate::state::CLIENT_SIGINT.store(true, Ordering::Relaxed);
     }
 
     fn signals(&self) -> Vec<Signal> {
         vec![Signal::SigTerm, Signal::SigInterrupt, Signal::SigQuit]
     }
+}
+
+/// Check the global SIGINT flag and, if set, call `state.stop_requested_check()`.
+/// The signal handler install is done lazily on first call.
+/// Should be called at the start of each fuzz loop iteration.
+pub fn client_stop_requested_check(state: &mut impl crate::state::Stoppable) {
+    #[cfg(all(unix, feature = "std"))]
+    {
+        static INSTALLED: AtomicBool = AtomicBool::new(false);
+        if !INSTALLED.swap(true, Ordering::Relaxed) {
+            unsafe {
+                if let Err(e) = setup_signal_handler(&raw mut CLIENT_SIGNAL_HANDLER) {
+                    log::warn!("Failed to install client signal handler: {e}");
+                }
+            }
+        }
+    }
+    state.stop_requested_check();
+}
+
+/// Reset the SIGINT flag (for `fuzz_loop_for`, so subsequent code isn't affected).
+pub fn reset_client_sigint() {
+    crate::state::CLIENT_SIGINT.store(false, Ordering::Relaxed);
 }
 
 /// A per-fuzzer unique `ID`, usually starting with `0` and increasing

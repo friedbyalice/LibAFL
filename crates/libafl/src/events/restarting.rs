@@ -4,8 +4,6 @@ use core::{fmt::Debug, sync::atomic::Ordering, time::Duration};
 
 #[cfg(feature = "std")]
 use libafl_bolts::core_affinity::CoreId;
-#[cfg(all(unix, not(miri)))]
-use libafl_bolts::os::unix_signals::setup_signal_handler;
 #[cfg(unix)]
 use libafl_bolts::os::{ForkResult, fork};
 use libafl_bolts::{
@@ -15,8 +13,6 @@ use libafl_bolts::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 
-#[cfg(all(unix, not(miri)))]
-use crate::events::EVENTMGR_SIGHANDLER_STATE;
 use crate::{
     Error,
     events::{
@@ -307,13 +303,6 @@ where
         };
 
         // At this point we are the fuzzer *NOT* the restarter.
-        // We setup signal handlers to clean up shmem segments used by state restorer
-        #[cfg(all(unix, not(miri)))]
-        if let Err(_e) = unsafe { setup_signal_handler(&raw mut EVENTMGR_SIGHANDLER_STATE) } {
-            // We can live without a proper ctrl+c signal handler. Print and ignore.
-            log::error!("Failed to setup signal handlers: {_e}");
-        }
-
         do_in_child(staterestorer, new_shmem_provider, core_id)
     }
 }

@@ -7,6 +7,7 @@ use core::{
     cell::{Ref, RefMut},
     fmt::Debug,
     marker::PhantomData,
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 #[cfg(feature = "std")]
@@ -500,6 +501,9 @@ where
     }
 }
 
+/// Set by the SIGINT handler when the user presses Ctrl-C.
+pub static CLIENT_SIGINT: AtomicBool = AtomicBool::new(false);
+
 /// A trait for types that want to expose a stop API
 pub trait Stoppable {
     /// Check if stop is requested
@@ -510,6 +514,14 @@ pub trait Stoppable {
 
     /// Discard the stop request
     fn discard_stop_request(&mut self);
+
+    /// Check the global SIGINT flag and, if set, request a stop via `request_stop`.
+    /// Call this at the start of each fuzz loop iteration.
+    fn stop_requested_check(&mut self) {
+        if CLIENT_SIGINT.load(Ordering::Relaxed) {
+            self.request_stop();
+        }
+    }
 }
 
 impl<C, I, R, SC> Stoppable for StdState<C, I, R, SC> {
