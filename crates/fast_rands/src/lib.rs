@@ -145,6 +145,14 @@ pub fn fast_bound(rand: u64, n: NonZeroUsize) -> usize {
     (mul >> 64) as usize
 }
 
+/// Faster and almost unbiased alternative to `rand % (n + 1)`.
+#[inline]
+#[must_use]
+pub fn fast_bound_incl(rand: u64, n: usize) -> usize {
+    let mul = u128::from(rand).wrapping_mul(u128::from(n as u64) + 1);
+    (mul >> 64) as usize
+}
+
 #[inline]
 #[must_use]
 fn fast_bound_usize(rand: u64, n: usize) -> usize {
@@ -200,6 +208,33 @@ pub trait Rand {
         // Even if we encounter a 0 in release here, the worst-case scenario should be an invalid return value.
         lower_bound_incl
             + self.below(unsafe { NonZero::new_unchecked(upper_bound_incl - lower_bound_incl + 1) })
+    }
+
+    /// Gets a value between the given lower bound (inclusive) and upper bound (inclusive).
+    ///
+    /// This variant handles the full `usize` range with an explicit branch.
+    #[inline]
+    fn between_branch(&mut self, lower_bound_incl: usize, upper_bound_incl: usize) -> usize {
+        debug_assert!(lower_bound_incl <= upper_bound_incl);
+
+        if lower_bound_incl == 0 && upper_bound_incl == usize::MAX {
+            return self.next() as usize;
+        }
+
+        // # Safety
+        // We check that the upper_bound_incl <= lower_bound_incl above (alas only in debug), so the below is fine.
+        // Even if we encounter a 0 in release here, the worst-case scenario should be an invalid return value.
+        lower_bound_incl
+            + self.below(unsafe { NonZero::new_unchecked(upper_bound_incl - lower_bound_incl + 1) })
+    }
+
+    /// Gets a value between the given lower bound (inclusive) and upper bound (inclusive).
+    ///
+    /// This variant computes the inclusive width in widened arithmetic.
+    #[inline]
+    fn between_wide(&mut self, lower_bound_incl: usize, upper_bound_incl: usize) -> usize {
+        debug_assert!(lower_bound_incl <= upper_bound_incl);
+        lower_bound_incl + fast_bound_incl(self.next(), upper_bound_incl - lower_bound_incl)
     }
 
     /// Convenient variant of [`choose`].
@@ -918,5 +953,17 @@ mod tests {
         assert_ne!(sub_a.next(), sub_c.next());
         sub_b.next();
         assert_eq!(sub_a.next(), sub_b.next());
+    }
+
+    #[test]
+    fn test_between_branch_full_range() {
+        let mut rand = StdRand::with_seed(0);
+        let _ = rand.between_branch(0, usize::MAX);
+    }
+
+    #[test]
+    fn test_between_wide_full_range() {
+        let mut rand = StdRand::with_seed(0);
+        let _ = rand.between_wide(0, usize::MAX);
     }
 }

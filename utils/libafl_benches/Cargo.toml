@@ -40,3 +40,7 @@ harness = false
 [[bench]]
 name = "hash_speeds"
 harness = false
+
+[[bench]]
+name = "between_speeds"
+harness = false
