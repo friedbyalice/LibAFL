@@ -2,7 +2,6 @@
 //! which may be useful for certain targets which are primarily string-oriented.
 use alloc::{borrow::Cow, vec::Vec};
 use core::{
-    borrow::Borrow,
     cmp::{Ordering, Reverse},
     num::NonZero,
     ops::Range,
@@ -29,12 +28,6 @@ pub mod unicode_categories;
 
 /// Input which contains the context necessary to perform unicode mutations
 pub type UnicodeInput = (BytesInput, UnicodeIdentificationMetadata);
-
-impl Borrow<BytesInput> for UnicodeInput {
-    fn borrow(&self) -> &BytesInput {
-        &self.0
-    }
-}
 
 impl<S> MutatedTransform<BytesInput, S> for UnicodeInput
 where
